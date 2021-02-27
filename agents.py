@@ -18,17 +18,18 @@ debuglogger.setLevel('INFO')
 
 
 def reset_parameters_util(model):
-    for m in model.modules():
-        if isinstance(m, nn.Linear):
-            m.weight.data.set_(xavier_normal(m.weight.data))
-            if m.bias is not None:
-                m.bias.data.zero_()
-        elif isinstance(m, nn.GRUCell):
-            for mm in m.parameters():
-                if mm.data.ndimension() == 2:
-                    mm.data.set_(xavier_normal(mm.data))
-                elif mm.data.ndimension() == 1:  # Bias
-                    mm.data.zero_()
+    pass
+    # for m in model.modules():
+    #     if isinstance(m, nn.Linear):
+    #         m.weight.data.set_(xavier_normal(m.weight.data))
+    #         if m.bias is not None:
+    #             m.bias.data.zero_()
+    #     elif isinstance(m, nn.GRUCell):
+    #         for mm in m.parameters():
+    #             if mm.data.ndimension() == 2:
+    #                 mm.data.set_(xavier_normal(mm.data))
+    #             elif mm.data.ndimension() == 1:  # Bias
+    #                 mm.data.zero_()
 
 
 class ImageProcessor(nn.Module):
@@ -45,7 +46,7 @@ class ImageProcessor(nn.Module):
         self.attn_W_w = nn.Linear(self.hid_dim, self.attn_dim)
         self.attn_U = nn.Linear(self.attn_dim, 1)
         self.attn_scores = []
-        self.reset_parameters()
+        # self.reset_parameters()
 
     def reset_parameters(self):
         reset_parameters_util(self)
@@ -369,11 +370,11 @@ class Agent(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                m.weight.data.set_(xavier_normal(m.weight.data))
-                if m.bias is not None:
-                    m.bias.data.zero_()
+        # for m in self.modules():
+        #     if isinstance(m, nn.Linear):
+        #         m.weight.data.set_(xavier_normal(m.weight.data))
+        #         if m.bias is not None:
+        #             m.bias.data.zero_()
         self.image_processor.reset_parameters()
         self.message_processor.reset_parameters()
         self.text_processor.reset_parameters()

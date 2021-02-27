@@ -9,8 +9,11 @@ import copy
 import functools
 import logging
 import pickle
+sys.path.append('/specific/netapp5/joberant/nlp_fall_2021/ofirshechter/NLP/ShapeWorld')
 
 import torch
+torch.set_default_tensor_type('torch.FloatTensor')
+
 from torch.autograd import Variable as _Variable
 import torch.nn.functional as F
 import torch.nn as nn
@@ -2172,7 +2175,7 @@ def multistep_loss_binary(binary_features, binary_probs, rewards, baseline_rewar
 
 
 def calculate_loss_bas(baseline_scores, rewards):
-    loss_bas = nn.MSELoss()(baseline_scores, Variable(rewards))
+    loss_bas = nn.MSELoss()(baseline_scores, Variable(rewards).unsqueese(1))
     return loss_bas
 
 

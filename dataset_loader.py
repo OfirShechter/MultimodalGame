@@ -8,6 +8,7 @@ import string
 import gflags
 import numpy as np
 import copy
+sys.path.append('/specific/netapp5/joberant/nlp_fall_2021/ofirshechter/NLP/ShapeWorld')
 
 from torchvision.utils import save_image
 from torch.autograd import Variable
