@@ -56,7 +56,7 @@ def recursively_set_device(inp, gpu):
         return (recursively_set_device(ii, gpu) for ii in inp)
     elif hasattr(inp, 'cpu'):
         if gpu >= 0:
-            inp = inp.cuda()
+            inp = inp.cuda(gpu)
         else:
             inp = inp.cpu()
     return inp
@@ -341,7 +341,7 @@ def load_hdf5(hdf5_file, batch_size, random_seed, shuffle, truncate_final_batch=
 def embed(word_dict, emb):
     glove = {}
     print("Vocab Size: {}".format(len(word_dict.keys())))
-    with open(emb, "r") as f:
+    with open(emb, "r", encoding="utf-8") as f:
         for line in f:
             word = line.strip()
             word = word.split(" ")

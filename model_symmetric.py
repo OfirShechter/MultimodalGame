@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import time
+from collections import defaultdict
+
 import numpy as np
 import random
 import h5py
@@ -48,13 +50,13 @@ FLAGS = gflags.FLAGS
 SHAPES = ['circle', 'cross', 'ellipse', 'pentagon', 'rectangle', 'semicircle', 'square', 'triangle']
 COLORS = ['blue', 'cyan', 'gray', 'green', 'magenta', 'red', 'yellow']
 OOD_EXAMPLES = ['square_red', 'triangle_green', 'circle_blue', 'rectangle_yellow', 'cross_magenta', 'ellipse_cyan']
-MAX_EXAMPLES_TO_SAVE = 200
+MAX_EXAMPLES_TO_SAVE = 1000
 
 
 def Variable(*args, **kwargs):
     var = _Variable(*args, **kwargs)
     if FLAGS.cuda:
-        var = var.cuda()
+        var = var.cuda(FLAGS.gpu)
     return var
 
 
@@ -339,7 +341,10 @@ def add_data_point(batch, i, data_store, messages_1, messages_2, probs_1, probs_
     data_store["caption"].append(batch["caption_str"][i])
     data_store["shapes"].append(batch["shapes"][i])
     data_store["colors"].append(batch["colors"][i])
+    data_store["text_shapes"].append(batch["texts_shapes"][i])
+    data_store["text_colors"].append(batch["texts_colors"][i])
     data_store["texts"].append(batch["texts_str"][i])
+    data_store["non_blank_partition"].append(batch['non_blank_partition'][i])
     # Add messages, probs and entropy from each exchange
     m_1 = []  # message
     p_1 = []  # message probability
@@ -398,6 +403,14 @@ def save_messages_and_stats(correct, incorrect, agent_tag):
         elem["probs_2"] = correct["probs_2"][i]
         elem["shape"] = correct["shapes"][i]
         elem["color"] = correct["colors"][i]
+        elem["p"] = correct["p"][i]
+        elem["target"] = correct["target"][i]
+        elem["text_shapes"] = correct["text_shapes"][i]
+        elem["text_colors"] = correct["text_colors"][i]
+        elem["texts"] = correct["texts"][i]
+        elem["non_blank_partition"] = correct["non_blank_partition"][i]
+        elem["msg_2_ent"] = correct["msg_2_ent"][i]
+        elem["msg_1_ent"] = correct["msg_1_ent"][i]
         elem["correct"] = True
         message_data.append(elem)
     for i in range(num_incorrect):
@@ -409,6 +422,14 @@ def save_messages_and_stats(correct, incorrect, agent_tag):
         elem["probs_2"] = incorrect["probs_2"][i]
         elem["shape"] = incorrect["shapes"][i]
         elem["color"] = incorrect["colors"][i]
+        elem["p"] = incorrect["p"][i]
+        elem["target"] = incorrect["target"][i]
+        elem["text_shapes"] = incorrect["text_shapes"][i]
+        elem["text_colors"] = incorrect["text_colors"][i]
+        elem["texts"] = incorrect["texts"][i]
+        elem["non_blank_partition"] = incorrect["non_blank_partition"][i]
+        elem["msg_2_ent"] = incorrect["msg_2_ent"][i]
+        elem["msg_1_ent"] = incorrect["msg_1_ent"][i]
         elem["correct"] = False
         message_data.append(elem)
     debuglogger.info(f'Saving messages...')
@@ -475,10 +496,10 @@ def get_similarity(dataset_path, in_domain_eval, agent1, agent2, a1_group, a2_gr
 
         # GPU support
         if FLAGS.cuda:
-            im_feats_1 = im_feats_1.cuda()
-            im_feats_2 = im_feats_2.cuda()
-            target = target.cuda()
-            desc = desc.cuda()
+            im_feats_1 = im_feats_1.cuda(FLAGS.gpu)
+            im_feats_2 = im_feats_2.cuda(FLAGS.gpu)
+            target = target.cuda(FLAGS.gpu)
+            desc = desc.cuda(FLAGS.gpu)
 
         data = {"im_feats_1": im_feats_1,
                 "im_feats_2": im_feats_2,
@@ -667,7 +688,7 @@ def get_similarity(dataset_path, in_domain_eval, agent1, agent2, a1_group, a2_gr
                             debuglogger.debug(f'y1 logits: {y[0][-1].data}, y2 logits: {y[1][-1].data}')
                             debuglogger.debug(f'y1: {argmax_y1.data[0]}, y2: {argmax_y2.data[0]}, new_target: {new_target[0]}')
                             if FLAGS.cuda:
-                                new_target = new_target.cuda()
+                                new_target = new_target.cuda(FLAGS.gpu)
                             if change_agent == 1:
                                 # Calculate score for agent 2
                                 (dist_2_change, na, na, na, na, na) = get_classification_loss_and_stats(y[1][-1], new_target)
@@ -762,7 +783,7 @@ def get_similarity(dataset_path, in_domain_eval, agent1, agent2, a1_group, a2_gr
                                     debuglogger.debug(f'y1 logits: {y[0][-1].data}, y2 logits: {y[1][-1].data}')
                                     debuglogger.debug(f'y1: {argmax_y1.data[0]}, y2: {argmax_y2.data[0]}, new_target: {new_target[0]}')
                                     if FLAGS.cuda:
-                                        new_target = new_target.cuda()
+                                        new_target = new_target.cuda(FLAGS.gpu)
                                     if change_agent == 1:
                                         # Calculate score for agent 2
                                         (dist_2_change, na, na, na, na, na) = get_classification_loss_and_stats(y[1][-1], new_target)
@@ -845,7 +866,7 @@ def get_similarity(dataset_path, in_domain_eval, agent1, agent2, a1_group, a2_gr
                                     debuglogger.debug(f'y1 logits: {y[0][-1].data}, y2 logits: {y[1][-1].data}')
                                     debuglogger.debug(f'y1: {argmax_y1.data[0]}, y2: {argmax_y2.data[0]}, new_target: {new_target[0]}')
                                     if FLAGS.cuda:
-                                        new_target = new_target.cuda()
+                                        new_target = new_target.cuda(FLAGS.gpu)
                                     if change_agent == 1:
                                         # Calculate score for agent 2
                                         (dist_2_change, na, na, na, na, na) = get_classification_loss_and_stats(y[1][-1], new_target)
@@ -984,40 +1005,8 @@ def eval_dev(dataset_path, top_k, agent1, agent2, logger, flogger, epoch, step, 
     """
 
     extra = dict()
-    correct_to_analyze = {"masked_im_1": [],
-                          "masked_im_2": [],
-                          "msg_1": [],
-                          "msg_1_ent": [],
-                          "msg_1_str": [],
-                          "msg_2": [],
-                          "msg_2_ent": [],
-                          "msg_2_str": [],
-                          "probs_1": [],
-                          "probs_2": [],
-                          "p": [],
-                          "target": [],
-                          "caption": [],
-                          "shapes": [],
-                          "colors": [],
-                          "texts": [],
-                          }
-    incorrect_to_analyze = {"masked_im_1": [],
-                            "masked_im_2": [],
-                            "msg_1": [],
-                            "msg_1_ent": [],
-                            "msg_1_str": [],
-                            "msg_2": [],
-                            "msg_2_ent": [],
-                            "msg_2_str": [],
-                            "probs_1": [],
-                            "probs_2": [],
-                            "p": [],
-                            "target": [],
-                            "caption": [],
-                            "shapes": [],
-                            "colors": [],
-                            "texts": [],
-                            }
+    correct_to_analyze = defaultdict(list)
+    incorrect_to_analyze = defaultdict(list)
 
     # Keep track of shapes and color accuracy
     shapes_accuracy = {}
@@ -1096,10 +1085,10 @@ def eval_dev(dataset_path, top_k, agent1, agent2, logger, flogger, epoch, step, 
 
         # GPU support
         if FLAGS.cuda:
-            im_feats_1 = im_feats_1.cuda()
-            im_feats_2 = im_feats_2.cuda()
-            target = target.cuda()
-            desc = desc.cuda()
+            im_feats_1 = im_feats_1.cuda(FLAGS.gpu)
+            im_feats_2 = im_feats_2.cuda(FLAGS.gpu)
+            target = target.cuda(FLAGS.gpu)
+            desc = desc.cuda(FLAGS.gpu)
 
         data = {"im_feats_1": im_feats_1,
                 "im_feats_2": im_feats_2,
@@ -1727,23 +1716,9 @@ def eval_community(eval_list, models_dict, dev_accuracy_log, logger, flogger, ep
                         agent_tag = f'A_{i + 1}_{j + 1}'
                         if i == j:
                             # Create a copy of agents playing with themselves to avoid sharing the hidden state
-                            agent2 = Agent(im_feature_type=FLAGS.img_feat,
-                                           im_feat_dim=FLAGS.img_feat_dim,
-                                           h_dim=FLAGS.h_dim,
-                                           m_dim=FLAGS.m_dim,
-                                           desc_dim=FLAGS.desc_dim,
-                                           num_classes=FLAGS.num_classes,
-                                           s_dim=FLAGS.s_dim,
-                                           use_binary=FLAGS.use_binary,
-                                           use_attn=FLAGS.visual_attn,
-                                           attn_dim=FLAGS.attn_dim,
-                                           use_MLP=FLAGS.use_MLP,
-                                           cuda=FLAGS.cuda,
-                                           im_from_scratch=FLAGS.improc_from_scratch,
-                                           dropout=FLAGS.dropout)
-                            agent2.load_state_dict(agent1.state_dict())
+                            agent2 = agent_deepcopy(agent1)
                             if FLAGS.cuda:
-                                agent2.cuda()
+                                agent2.cuda(FLAGS.gpu)
                         domain = f'In Domain Dev: Agent {i + 1} | Agent {j + 1}, ids [{id(agent1)}]/[{id(agent2)}]: '
                         _, _ = get_and_log_dev_performance(agent1, agent2, FLAGS.dataset_indomain_valid_path, True, dev_accuracy_log, logger, flogger, domain, epoch, step, i_batch, store_examples, analyze_messages, save_messages, agent_tag)
         else:
@@ -1757,23 +1732,9 @@ def eval_community(eval_list, models_dict, dev_accuracy_log, logger, flogger, ep
                     agent_tag = f'A_{i + 1}_{j + 1}'
                     if i == j:
                         # Create a copy of agents playing with themselves to avoid sharing the hidden state
-                        agent2 = Agent(im_feature_type=FLAGS.img_feat,
-                                       im_feat_dim=FLAGS.img_feat_dim,
-                                       h_dim=FLAGS.h_dim,
-                                       m_dim=FLAGS.m_dim,
-                                       desc_dim=FLAGS.desc_dim,
-                                       num_classes=FLAGS.num_classes,
-                                       s_dim=FLAGS.s_dim,
-                                       use_binary=FLAGS.use_binary,
-                                       use_attn=FLAGS.visual_attn,
-                                       attn_dim=FLAGS.attn_dim,
-                                       use_MLP=FLAGS.use_MLP,
-                                       cuda=FLAGS.cuda,
-                                       im_from_scratch=FLAGS.improc_from_scratch,
-                                       dropout=FLAGS.dropout)
-                        agent2.load_state_dict(agent1.state_dict())
+                        agent2 = agent_deepcopy(agent1)
                         if FLAGS.cuda:
-                            agent2.cuda()
+                            agent2.cuda(FLAGS.gpu)
                     domain = f'In Domain Dev: Agent {i + 1} | Agent {j + 1}, ids [{id(agent1)}]/[{id(agent2)}]: '
                     _, _ = get_and_log_dev_performance(agent1, agent2, FLAGS.dataset_indomain_valid_path, True, dev_accuracy_log, logger, flogger, domain, epoch, step, i_batch, store_examples, analyze_messages, save_messages, agent_tag)
 
@@ -1781,7 +1742,7 @@ def eval_community(eval_list, models_dict, dev_accuracy_log, logger, flogger, ep
 def corrupt_message(corrupt_region, agent, binary_message):
     # Obtain mask
     mask = Variable(build_mask(corrupt_region, agent.m_dim))
-    mask_broadcast = mask.view(1, agent_1.m_dim).expand_as(binary_message)
+    mask_broadcast = mask.view(1, agent.m_dim).expand_as(binary_message)
     # Subtract the mask to change values, but need to get absolute value
     # to set -1 values to 1 to essentially "flip" all the bits.
     binary_message = (binary_message - mask_broadcast).abs()
@@ -1902,7 +1863,7 @@ def exchange(a1, a2, exchange_args):
     m_binary = Variable(torch.FloatTensor(batch_size, agent1.m_dim).fill_(
         FLAGS.first_msg), volatile=not train)
     if FLAGS.cuda:
-        m_binary = m_binary.cuda()
+        m_binary = m_binary.cuda(FLAGS.gpu)
 
     if train:
         agent1.train()
@@ -1977,8 +1938,8 @@ def exchange(a1, a2, exchange_args):
                 add = a_dict_add[exchange_args["add"]].unsqueeze(0)
                 sub = a_dict_sub[exchange_args["subtract"]].unsqueeze(0)
                 if FLAGS.cuda:
-                    add = add.cuda()
-                    sub = sub.cuda()
+                    add = add.cuda(FLAGS.gpu)
+                    sub = sub.cuda(FLAGS.gpu)
                 new_m_prob = m_1e_probs.data - sub + add
                 new_m_binary = torch.clamp(new_m_prob, 0, 1).round()
                 m_1e_binary = _Variable(new_m_binary)
@@ -2023,8 +1984,8 @@ def exchange(a1, a2, exchange_args):
                 add = a_dict_add[exchange_args["add"]].unsqueeze(0)
                 sub = a_dict_sub[exchange_args["subtract"]].unsqueeze(0)
                 if FLAGS.cuda:
-                    add = add.cuda()
-                    sub = sub.cuda()
+                    add = add.cuda(FLAGS.gpu)
+                    sub = sub.cuda(FLAGS.gpu)
                 new_m_prob = m_2e_probs.data - sub + add
                 new_m_binary = torch.clamp(new_m_prob, 0, 1).round()
                 m_2e_binary = _Variable(new_m_binary)
@@ -2148,7 +2109,7 @@ def calculate_loss_binary(binary_features, binary_probs, rewards, baseline_rewar
     weight = Variable(rewards) - \
         Variable(baseline_rewards.clone().detach().data)
     if rewards.size(0) > 1:  # Ensures weights are not larger than 1
-        weight = weight / np.maximum(1., torch.std(weight.data))
+        weight = weight / np.maximum(1., torch.std(weight.data)).cuda(FLAGS.gpu).float()
     loss = torch.mean(-1 * weight * log_p_z)
 
     # Must do both sides of negent, otherwise is skewed towards 0.
@@ -2175,7 +2136,7 @@ def multistep_loss_binary(binary_features, binary_probs, rewards, baseline_rewar
 
 
 def calculate_loss_bas(baseline_scores, rewards):
-    loss_bas = nn.MSELoss()(baseline_scores, Variable(rewards).unsqueese(1))
+    loss_bas = nn.MSELoss()(baseline_scores, Variable(rewards).unsqueeze(1))
     return loss_bas
 
 
@@ -2227,11 +2188,32 @@ def get_classification_loss_and_stats(predictions, targets):
     maxdist, argmax = dist.data.max(1)
     probs = F.softmax(predictions, dim=1)
     ent = (torch.log(probs + 1e-8) * probs).sum(1).mean()
-    debuglogger.debug(f'Mean entropy: {-ent.data[0]}')
+    debuglogger.debug(f'Mean entropy: {-ent.data.item()}')
     nll_loss = nn.NLLLoss()(dist, Variable(targets))
     logs = loglikelihood(Variable(dist.data),
                          Variable(targets.view(-1, 1)))
     return (dist, maxdist, argmax, ent, nll_loss, logs)
+
+
+def agent_deepcopy(agent1):
+    agent2 = Agent(im_feature_type=FLAGS.img_feat,
+                   im_feat_dim=FLAGS.img_feat_dim,
+                   h_dim=FLAGS.h_dim,
+                   m_dim=FLAGS.m_dim,
+                   desc_dim=FLAGS.desc_dim,
+                   num_classes=FLAGS.num_classes,
+                   s_dim=FLAGS.s_dim,
+                   use_binary=FLAGS.use_binary,
+                   use_attn=FLAGS.visual_attn,
+                   attn_dim=FLAGS.attn_dim,
+                   use_MLP=FLAGS.use_MLP,
+                   cuda=FLAGS.cuda,
+                   im_from_scratch=FLAGS.improc_from_scratch,
+                   dropout=FLAGS.dropout)
+    agent2.load_state_dict(agent1.state_dict())
+    if next(agent1.parameters()).is_cuda:
+        agent2.cuda(FLAGS.gpu)
+    return agent2
 
 
 def run():
@@ -2402,11 +2384,12 @@ def run():
     # GPU support
     if FLAGS.cuda:
         for m in models_dict.values():
-            m.cuda()
+            m.cuda(FLAGS.gpu)
         for m in frozen_agents.values():
-            m.cuda()
+            m.cuda(FLAGS.gpu)
         for o in optimizers_dict.values():
-            recursively_set_device(o.state_dict(), gpu=0)
+            recursively_set_device(o.state_dict(), gpu=FLAGS.gpu)
+    print("###################### using gpu", FLAGS.gpu)
 
     # If training / evaluating with pools of agents or communities of agents sample with each batch
     if FLAGS.agent_pools or FLAGS.agent_communities:
@@ -2471,23 +2454,9 @@ def run():
                     agent2 = models_dict["agent" + str(j + 1)]
                     if i == j:
                         # Create a copy of agents playing with themselves to avoid sharing the hidden state
-                        agent2 = Agent(im_feature_type=FLAGS.img_feat,
-                                       im_feat_dim=FLAGS.img_feat_dim,
-                                       h_dim=FLAGS.h_dim,
-                                       m_dim=FLAGS.m_dim,
-                                       desc_dim=FLAGS.desc_dim,
-                                       num_classes=FLAGS.num_classes,
-                                       s_dim=FLAGS.s_dim,
-                                       use_binary=FLAGS.use_binary,
-                                       use_attn=FLAGS.visual_attn,
-                                       attn_dim=FLAGS.attn_dim,
-                                       use_MLP=FLAGS.use_MLP,
-                                       cuda=FLAGS.cuda,
-                                       im_from_scratch=FLAGS.improc_from_scratch,
-                                       dropout=FLAGS.dropout)
-                        agent2.load_state_dict(agent1.state_dict())
+                        agent2 = agent_deepcopy(agent1)
                         if FLAGS.cuda:
-                            agent2.cuda()
+                            agent2.cuda(FLAGS.gpu)
                     if i == 0 and j == 0:
                         # Report in domain development accuracy and store examples
                         # TODO: Store examples currently disabled. To fix store examples - image saving disabled because it clogs the memory and makes everything very slow
@@ -2625,7 +2594,21 @@ def run():
                 agent2 = models_dict["agent" + str(i + 2)]
                 if i == 0:
                     # Report in domain development accuracy and analyze messages and store examples
-                    dev_accuracy_id[i], total_accuracy_com = get_and_log_dev_performance(agent1, agent2, FLAGS.dataset_indomain_valid_path, True, dev_accuracy_id[i], logger, flogger, f'In Domain Agents {i + 1},{i + 2}', epoch, step, i_batch, store_examples=False, analyze_messages=False, save_messages=True, agent_tag=f'eval_only_A_{i + 1}_{i + 2}')
+                    dev_accuracy_id[i], total_accuracy_com = get_and_log_dev_performance(agent1,
+                                                                                         agent2,
+                                                                                         FLAGS.dataset_indomain_valid_path,
+                                                                                         True,
+                                                                                         dev_accuracy_id[i],
+                                                                                         logger,
+                                                                                         flogger,
+                                                                                         f'In Domain Agents {i + 1},{i + 2}',
+                                                                                         epoch,
+                                                                                         step,
+                                                                                         i_batch,
+                                                                                         store_examples=False,
+                                                                                         analyze_messages=False,
+                                                                                         save_messages=True,
+                                                                                         agent_tag=f'eval_only_A_{i + 1}_{i + 2}')
                 else:
                     # Report in domain development accuracy
                     dev_accuracy_id[i], total_accuracy_com = get_and_log_dev_performance(
@@ -2638,7 +2621,7 @@ def run():
             for i in range(FLAGS.num_agents):
                 agent1 = models_dict["agent" + str(i + 1)]
                 # Create a copy of agents playing with themselves to avoid sharing the hidden state
-                agent2 = copy.deepcopy(agent1)
+                agent2 = agent_deepcopy(agent1)
                 flogger.Log("Agent {} self communication: id {}".format(i + 1, id(agent)))
                 dev_accuracy_self_com[i], total_accuracy_com = get_and_log_dev_performance(
                     agent1, agent2, FLAGS.dataset_indomain_valid_path, True, dev_accuracy_self_com[i], logger, flogger, "Agent " + str(i + 1) + " self communication: In Domain", epoch, step, i_batch, store_examples=False, analyze_messages=False, save_messages=False, agent_tag=f'eval_only_self_com_A_{i + 1}')
@@ -2742,23 +2725,9 @@ def run():
 
             # Create a copy of agents playing with themselves to avoid sharing the hidden state
             if FLAGS.num_agents == 1 or (agent_idxs[0] == agent_idxs[1]):
-                agent2 = Agent(im_feature_type=FLAGS.img_feat,
-                               im_feat_dim=FLAGS.img_feat_dim,
-                               h_dim=FLAGS.h_dim,
-                               m_dim=FLAGS.m_dim,
-                               desc_dim=FLAGS.desc_dim,
-                               num_classes=FLAGS.num_classes,
-                               s_dim=FLAGS.s_dim,
-                               use_binary=FLAGS.use_binary,
-                               use_attn=FLAGS.visual_attn,
-                               attn_dim=FLAGS.attn_dim,
-                               use_MLP=FLAGS.use_MLP,
-                               cuda=FLAGS.cuda,
-                               im_from_scratch=FLAGS.improc_from_scratch,
-                               dropout=FLAGS.dropout)
-                agent2.load_state_dict(agent1.state_dict())
+                agent2 = agent_deepcopy(agent1)
                 if FLAGS.cuda:
-                    agent2.cuda()
+                    agent2.cuda(FLAGS.gpu)
             debuglogger.debug(f'Agent 1: {agent_idxs[0]}, Agent 1: {agent_idxs[1]}')
 
             # Converted to Variable in get_classification_loss_and_stats
@@ -2770,10 +2739,10 @@ def run():
 
             # GPU support
             if FLAGS.cuda:
-                im_feats_1 = im_feats_1.cuda()
-                im_feats_2 = im_feats_2.cuda()
-                target = target.cuda()
-                desc = desc.cuda()
+                im_feats_1 = im_feats_1.cuda(FLAGS.gpu)
+                im_feats_2 = im_feats_2.cuda(FLAGS.gpu)
+                target = target.cuda(FLAGS.gpu)
+                desc = desc.cuda(FLAGS.gpu)
 
             data = {"im_feats_1": im_feats_1,
                     "im_feats_2": im_feats_2,
@@ -2980,7 +2949,7 @@ def run():
                 # Update agent2
                 optimizer_agent2.zero_grad()
                 loss_agent2.backward()
-                nn.utils.clip_grad_norm(agent2.parameters(), max_norm=1.)
+                nn.utils.clip_grad_norm_(agent2.parameters(), max_norm=1.)
                 optimizer_agent2.step()
 
             # Print logs regularly
@@ -3028,7 +2997,7 @@ def run():
                         log_ent_agent1_bin = "Entropy Agent1 Binary"
                         for i, ent in enumerate(ent_agent1_bin):
                             log_ent_agent1_bin += "\n{}. {}".format(
-                                i, -ent.data[0])
+                                i, -ent.data.item())
                         log_ent_agent1_bin += "\n"
                         flogger.Log(log_ent_agent1_bin)
 
@@ -3036,14 +3005,14 @@ def run():
                         log_ent_agent2_bin = "Entropy Agent2 Binary"
                         for i, ent in enumerate(ent_agent2_bin):
                             log_ent_agent2_bin += "\n{}. {}".format(
-                                i, -ent.data[0])
+                                i, -ent.data.item())
                         log_ent_agent2_bin += "\n"
                         flogger.Log(log_ent_agent2_bin)
 
                 if len(ent_agent1_y) > 0:
                     log_ent_agent1_y = "Entropy Agent1 Predictions\n"
                     log_ent_agent1_y += "No comms entropy {}\n Comms entropy\n".format(
-                        -ent_1_nc.data[0])
+                        -ent_1_nc.data.item())
                     for i, ent in enumerate(ent_agent1_y):
                         log_ent_agent1_y += "\n{}. {}".format(i, -ent.data[0])
                     log_ent_agent1_y += "\n"
@@ -3052,7 +3021,7 @@ def run():
                 if len(ent_agent2_y) > 0:
                     log_ent_agent2_y = "Entropy Agent2 Predictions\n"
                     log_ent_agent2_y += "No comms entropy {}\n Comms entropy\n".format(
-                        -ent_2_nc.data[0])
+                        -ent_2_nc.data.item())
                     for i, ent in enumerate(ent_agent2_y):
                         log_ent_agent2_y += "\n{}. {}".format(i, -ent.data[0])
                     log_ent_agent2_y += "\n"
@@ -3060,36 +3029,36 @@ def run():
 
                 # Agent 1
                 logger.log(key="Loss Agent 1 (Total)",
-                           val=loss_agent1.data[0], step=step)
+                           val=loss_agent1.data.item(), step=step)
                 logger.log(key="Loss Agent 1 (NLL)",
-                           val=nll_loss_1.data[0], step=step)
+                           val=nll_loss_1.data.item(), step=step)
                 logger.log(key="Loss Agent 1 (NLL NC)",
-                           val=nll_loss_1_nc.data[0], step=step)
+                           val=nll_loss_1_nc.data.item(), step=step)
                 logger.log(key="Loss Agent 1 (NLL COM)",
-                           val=nll_loss_1_com.data[0], step=step)
+                           val=nll_loss_1_com.data.item(), step=step)
                 if FLAGS.use_binary:
                     logger.log(key="Loss Agent 1 (RL)",
-                               val=loss_binary_1.data[0], step=step)
+                               val=loss_binary_1.data.item(), step=step)
                     logger.log(key="Loss Agent 1 (BAS)",
-                               val=loss_baseline_1.data[0], step=step)
+                               val=loss_baseline_1.data.item(), step=step)
                     if not FLAGS.fixed_exchange:
                         # TODO
                         pass
 
                 # Agent 2
                 logger.log(key="Loss Agent 2 (Total)",
-                           val=loss_agent2.data[0], step=step)
+                           val=loss_agent2.data.item(), step=step)
                 logger.log(key="Loss Agent 2 (NLL)",
-                           val=nll_loss_2.data[0], step=step)
+                           val=nll_loss_2.data.item(), step=step)
                 logger.log(key="Loss Agent 2 (NLL NC)",
-                           val=nll_loss_2_nc.data[0], step=step)
+                           val=nll_loss_2_nc.data.item(), step=step)
                 logger.log(key="Loss Agent 2 (NLL COM)",
-                           val=nll_loss_2_com.data[0], step=step)
+                           val=nll_loss_2_com.data.item(), step=step)
                 if FLAGS.use_binary:
                     logger.log(key="Loss Agent 2 (RL)",
-                               val=loss_binary_2.data[0], step=step)
+                               val=loss_binary_2.data.item(), step=step)
                     logger.log(key="Loss Agent 2 (BAS)",
-                               val=loss_baseline_2.data[0], step=step)
+                               val=loss_baseline_2.data.item(), step=step)
                     if not FLAGS.fixed_exchange:
                         # TODO
                         pass
@@ -3120,7 +3089,7 @@ def run():
                     # Optionally store additional information
                     data = dict(step=step, best_dev_acc=best_dev_acc)
                     torch_save(FLAGS.checkpoint + "_best", data, models_dict,
-                               optimizers_dict, gpu=0 if FLAGS.cuda else -1)
+                               optimizers_dict, gpu=FLAGS.gpu if FLAGS.cuda else -1)
 
                     # Re-run in domain dev performance and log examples and analyze messages for a number of pairs of agents
                     # Time consuming to run, only run if dev_acc high enough
@@ -3163,23 +3132,9 @@ def run():
                 for i in range(FLAGS.num_agents):
                     agent1 = models_dict["agent" + str(i + 1)]
                     # Create a copy of agents playing with themselves to avoid sharing the hidden state
-                    agent2 = Agent(im_feature_type=FLAGS.img_feat,
-                                   im_feat_dim=FLAGS.img_feat_dim,
-                                   h_dim=FLAGS.h_dim,
-                                   m_dim=FLAGS.m_dim,
-                                   desc_dim=FLAGS.desc_dim,
-                                   num_classes=FLAGS.num_classes,
-                                   s_dim=FLAGS.s_dim,
-                                   use_binary=FLAGS.use_binary,
-                                   use_attn=FLAGS.visual_attn,
-                                   attn_dim=FLAGS.attn_dim,
-                                   use_MLP=FLAGS.use_MLP,
-                                   cuda=FLAGS.cuda,
-                                   im_from_scratch=FLAGS.improc_from_scratch,
-                                   dropout=FLAGS.dropout)
-                    agent2.load_state_dict(agent1.state_dict())
+                    agent2 = agent_deepcopy(agent1)
                     if FLAGS.cuda:
-                        agent2.cuda()
+                        agent2.cuda(FLAGS.gpu)
                     flogger.Log("Agent {} self communication: id {}".format(i + 1, id(agent)))
                     dev_accuracy_self_com[i], total_accuracy_com = get_and_log_dev_performance(
                         agent1, agent2, FLAGS.dataset_indomain_valid_path, True, dev_accuracy_self_com[i], logger, flogger, "Agent " + str(i + 1) + " self communication: In Domain", epoch, step, i_batch, store_examples=False, analyze_messages=False, save_messages=False, agent_tag=f'self_com_A_{i + 1}')
@@ -3195,23 +3150,10 @@ def run():
                         _agent1 = models_dict["agent" + str(i + 1)]
                         if i == j:
                             # Create a copy of agents playing with themselves to avoid sharing the hidden state
-                            _agent2 = Agent(im_feature_type=FLAGS.img_feat,
-                                            im_feat_dim=FLAGS.img_feat_dim,
-                                            h_dim=FLAGS.h_dim,
-                                            m_dim=FLAGS.m_dim,
-                                            desc_dim=FLAGS.desc_dim,
-                                            num_classes=FLAGS.num_classes,
-                                            s_dim=FLAGS.s_dim,
-                                            use_binary=FLAGS.use_binary,
-                                            use_attn=FLAGS.visual_attn,
-                                            attn_dim=FLAGS.attn_dim,
-                                            use_MLP=FLAGS.use_MLP,
-                                            cuda=FLAGS.cuda,
-                                            im_from_scratch=FLAGS.improc_from_scratch,
-                                            dropout=FLAGS.dropout)
-                            _agent2.load_state_dict(agent1.state_dict())
+                            # originaly was _agent1
+                            _agent2 = agent_deepcopy(_agent1)
                             if FLAGS.cuda:
-                                _agent2.cuda()
+                                _agent2.cuda(FLAGS.gpu)
                         else:
                             _agent2 = models_dict["agent" + str(j + 1)]
                         dev_accuracy_id_pairs[i], total_accuracy_com = get_and_log_dev_performance(
@@ -3227,7 +3169,7 @@ def run():
                     # Optionally store additional information
                     data = dict(step=step, best_dev_acc=best_dev_acc)
                     torch_save(FLAGS.checkpoint + "_{0:.4f}".format(_avg_accuracy), data, models_dict,
-                               optimizers_dict, gpu=0 if FLAGS.cuda else -1)
+                               optimizers_dict, gpu=FLAGS.gpu if FLAGS.cuda else -1)
                     flogger.Log(f"Accuracy reached at least 75% on average, stopping training at step {step}...")
                     sys.exit()
 
@@ -3237,7 +3179,7 @@ def run():
                 # Optionally store additional information
                 data = dict(step=step, best_dev_acc=best_dev_acc)
                 torch_save(FLAGS.checkpoint, data, models_dict,
-                           optimizers_dict, gpu=0 if FLAGS.cuda else -1)
+                           optimizers_dict, gpu=FLAGS.gpu if FLAGS.cuda else -1)
 
             # Save separate copy of model every FLAGS.save_distinct_interval steps
             if step >= FLAGS.save_after and step % FLAGS.save_distinct_interval == 0:
@@ -3245,7 +3187,7 @@ def run():
                 # Optionally store additional information
                 data = dict(step=step, best_dev_acc=best_dev_acc)
                 torch_save(FLAGS.checkpoint + "_" + str(step), data, models_dict,
-                           optimizers_dict, gpu=0 if FLAGS.cuda else -1)
+                           optimizers_dict, gpu=FLAGS.gpu if FLAGS.cuda else -1)
 
             # Increment batch step
             step += 1
@@ -3459,6 +3401,7 @@ def flags():
         "bit_flip", False, "Whether sender's messages are corrupted.")
     gflags.DEFINE_string("corrupt_region", None,
                          "Comma-separated ranges of bit indexes (e.g. ``0:3,5'').")
+    gflags.DEFINE_integer("gpu", 0, "gpu index to work with")
 
 
 def default_flags():
@@ -3551,4 +3494,5 @@ if __name__ == '__main__':
     else:
         random.seed()
         np.random.seed()
+
     run()

@@ -232,7 +232,7 @@ class MessageProcessor(nn.Module):
             debuglogger.debug(f'Ignoring message, using blank instead...')
             blank_msg = _Variable(torch.zeros_like(m.data))
             if self.use_cuda:
-                blank_msg = blank_msg.cuda()
+                blank_msg = blank_msg.cuda(next(self.parameters()).device.index)
             return self.rnn(blank_msg, h)
 
 
@@ -273,10 +273,10 @@ class MessageGenerator(nn.Module):
         desc = torch.mul(y_broadcast, desc).sum(1).squeeze(1)
         debuglogger.debug(f'desc: {desc.size()}')
         # desc: batch_size x hid_dim
-        h_w = F.tanh(self.w_h(h_c) + self.w_d(desc))
+        h_w = torch.tanh(self.w_h(h_c) + self.w_d(desc))
         w_scores = self.w(h_w)
         if self.use_binary:
-            w_probs = F.sigmoid(w_scores)
+            w_probs = torch.sigmoid(w_scores)
             if training:
                 # debuglogger.info(f"Training...")
                 probs_ = w_probs.data.cpu().numpy()
@@ -289,7 +289,7 @@ class MessageGenerator(nn.Module):
                 # debuglogger.info(f"Eval mode, rounding...")
                 w_binary = torch.round(w_probs).detach()
             if w_probs.is_cuda:
-                w_binary = w_binary.cuda()
+                w_binary = w_binary.cuda(next(self.parameters()).device.index)
             w_feats = w_binary
             # debuglogger.debug(f'w_binary: {w_binary}')
         else:
@@ -394,7 +394,7 @@ class Agent(nn.Module):
     def initial_state(self, batch_size):
         h = _Variable(torch.zeros(batch_size, self.h_dim))
         if self.use_cuda:
-            h = h.cuda()
+            h = h.cuda(next(self.parameters()).device.index)
         return h
 
     def predict_classes(self, h_c, desc_proc, batch_size):
@@ -506,7 +506,7 @@ class Agent(nn.Module):
 
         # Calculate stop bits
         s_score = self.s(h_c)
-        s_prob = F.sigmoid(s_score)
+        s_prob = torch.sigmoid(s_score)
         debuglogger.debug(f's_score: {s_score.size()}')
         debuglogger.debug(f's_prob: {s_prob.size()}')
         if training:
@@ -518,7 +518,7 @@ class Agent(nn.Module):
             s_binary = _Variable(torch.from_numpy(
                 (rand_num < prob_).astype('float32')))
             if self.use_cuda:
-                s_binary = s_binary.cuda()
+                s_binary = s_binary.cuda(next(self.parameters()).device.index)
         else:
             # Infer decisions
             s_binary = torch.round(s_prob).detach()
