@@ -2953,7 +2953,7 @@ def run():
                 optimizer_agent2.step()
 
             # Print logs regularly
-            if step % FLAGS.log_interval == 0:
+            if step % FLAGS.log_interval == 0 and step != 0:
                 # Average batch accuracy
                 avg_batch_acc_total_nc = np.array(
                     batch_accuracy['total_acc_both_nc'][-FLAGS.log_interval:]).mean()
@@ -3074,7 +3074,7 @@ def run():
                            val=avg_batch_acc_atl1_com, step=step)
 
             # Report development accuracy
-            if step % FLAGS.log_dev == 0:
+            if step % FLAGS.log_dev == 0 and step != 0:
                 # Report in domain development accuracy and checkpoint if best result
                 log_agents = "Epoch: {} Step: {} Batch: {} Agent 1: {} Agent 2: {}".format(
                     epoch, step, i_batch, agent_idxs[0], agent_idxs[1])
